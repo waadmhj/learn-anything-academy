@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+api/.venv/
+api/*.db
+api/*.db-*
+api/.env
+# Node
+web/node_modules/
+web/.next/
+web/.env*.local
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.egg-info/
+.pytest_cache/
+*.db
+*.db-shm
+*.db-wal
+.env
+web/tsconfig.tsbuildinfo
+
+# Local Netlify folder
+.netlify

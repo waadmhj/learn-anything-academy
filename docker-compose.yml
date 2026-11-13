@@ -1,0 +1,35 @@
+# Full stack: PostgreSQL + FastAPI + Next.js.   docker compose up --build   → http://localhost:3000
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: academy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-academy-dev-only}
+      POSTGRES_DB: academy
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U academy"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: { context: ., dockerfile: api/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql+psycopg://academy:${POSTGRES_PASSWORD:-academy-dev-only}@db:5432/academy
+      AUTH_MODE: ${AUTH_MODE:-local}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      CORS_ORIGINS: http://localhost:3000
+      PUBLIC_URL: http://localhost:3000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+    depends_on: { db: { condition: service_healthy } }
+    ports: ["8000:8000"]
+
+  web:
+    build: { context: ./web, args: { API_URL: http://api:8000 } }
+    environment: { API_URL: http://api:8000 }
+    depends_on: [api]
+    ports: ["3000:3000"]
+
+volumes:
+  pgdata:

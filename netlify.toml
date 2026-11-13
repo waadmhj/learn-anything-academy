@@ -1,0 +1,13 @@
+# Netlify hosts the Next.js frontend only. The FastAPI backend must run elsewhere
+# (see docs/DEPLOYMENT.md). Set API_URL in Netlify's environment variables to the API's public URL.
+[build]
+  base = "web"
+  command = "npm run build"
+  publish = ".next"   # relative to base
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Netlify's Next.js adapter (server rendering, rewrites to the API, headers).
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
