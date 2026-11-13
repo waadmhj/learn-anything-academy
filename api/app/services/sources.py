@@ -7,6 +7,8 @@ Quality signals ("best evaluated"):
   * Semantic Scholar: citation counts (arXiv as a fallback when Semantic Scholar is unavailable).
   * Wikipedia: a neutral overview for each lesson.
   * YouTube (optional, needs YOUTUBE_API_KEY): like and view counts.
+  * Internet Archive: lecture and course videos ranked by downloads (no key needed).
+  * Hacker News video posts (YouTube/Vimeo links ranked by points).
 
 Nothing here is generated: every resource is a real URL returned by one of these services.
 Tests replace the backend with `set_backend(...)`.
@@ -52,6 +54,7 @@ class Candidate:
     year: int | None = None
     isbn: str | None = None
     youtube_id: str | None = None
+    archive_id: str | None = None
     duration: str = ""
     recommended_by: int = 0
     queries: set[str] = field(default_factory=set)
@@ -72,6 +75,8 @@ class Candidate:
             return math.log10(max(self.score or 1, 1)) / 2
         if self.source == "youtube":
             return math.log10(max(self.score or 1, 1)) / 2.5
+        if self.source == "internetarchive":
+            return math.log10(max(self.score or 1, 1)) / 3
         if self.source == "wikipedia":
             return 1.0
         return 0.5
@@ -93,6 +98,8 @@ class Candidate:
             return f"Cited by {self.score or 0:,} papers"
         if self.source == "youtube":
             return f"{self.score or 0:,} likes on YouTube"
+        if self.source == "internetarchive":
+            return f"{self.score or 0:,} views on the Internet Archive"
         if self.source == "wikipedia":
             return "Wikipedia overview"
         return self.provider
@@ -116,7 +123,7 @@ def classify(url: str, title: str = "") -> tuple[str, str | None]:
         return "video", m.group(1)
     host = (urlparse(url).hostname or "").lower()
     path = urlparse(url).path.lower()
-    if "youtube.com" in host:
+    if "youtube.com" in host or "vimeo.com" in host:
         return "video", None
     if "arxiv.org" in host or path.endswith(".pdf") or "doi.org" in host:
         return "paper", None
@@ -219,9 +226,24 @@ def page_title(url: str) -> str | None:
     return None
 
 
+_OG_TITLE = re.compile(r'<meta (?:property|name)="og:title" content="([^"]+)"')
+
+
+@lru_cache(maxsize=512)
+def youtube_page_title(url: str) -> str | None:
+    """A YouTube channel or playlist's name (from its og:title). Only called for youtube.com URLs."""
+    if domain(url).removeprefix("m.") != "youtube.com":
+        return None
+    text = get_text(url.replace("://m.youtube.com", "://www.youtube.com"))
+    m_ = _OG_TITLE.search(text or "")
+    return html.unescape(m_.group(1)).strip()[:200] if m_ else None
+
+
 def title_from_url(url: str) -> str:
     u = urlparse(url)
     if "youtube.com" in (u.hostname or ""):
+        if name := youtube_page_title(url):
+            return f"{name} (YouTube channel)" if "/playlist" not in u.path else name
         handle = next((p for p in u.path.split("/") if p.startswith("@")), None)
         return f"YouTube channel {handle}" if handle else "YouTube channel"
     tail = [p for p in u.path.split("/") if p][-1:] or [""]
@@ -282,7 +304,7 @@ class WebBackend:
             url, thread = first[k]
             if n < 2:
                 break
-            title = page_title(url) or title_from_url(url)
+            title = (None if "youtube.com" in url else page_title(url)) or title_from_url(url)
             kind, yt = classify(url, title)
             out.append(Candidate(
                 title=title, url=url, type=kind, source="hackernews", provider=domain(url), recommended_by=n,
@@ -404,6 +426,73 @@ class WebBackend:
             ))
         out.sort(key=lambda c: c.score or 0, reverse=True)
         return out[:limit]
+
+    def hn_videos(self, query: str, limit: int = 3) -> list[Candidate]:
+        """Videos (YouTube/Vimeo) that Hacker News voted up for the query."""
+        data = get_json("https://hn.algolia.com/api/v1/search", {"query": query, "tags": "story", "numericFilters": "points>=8", "hitsPerPage": 200})
+        out = []
+        for h in (data or {}).get("hits", []):
+            url = h.get("url") or ""
+            if not re.search(r"(youtube\.com|youtu\.be|vimeo\.com)/", url):
+                continue
+            kind, yt = classify(url, h.get("title") or "")
+            out.append(Candidate(
+                title=re.sub(r"\s*\[video\]\s*$", "", h.get("title") or "", flags=re.I), url=url, type="video", source="hackernews",
+                provider="YouTube" if yt or "youtube" in url else "Vimeo", score=h.get("points") or 0, comments=h.get("num_comments") or 0,
+                discussion_url=f"https://news.ycombinator.com/item?id={h['objectID']}", youtube_id=yt,
+                year=int(h["created_at"][:4]) if h.get("created_at") else None, queries={query},
+            ))
+        out.sort(key=lambda c: c.score or 0, reverse=True)
+        return out[:limit]
+
+    # Uploads that are usually re-posts of paid courses or unrelated media.
+    _ARCHIVE_SKIP = re.compile(r"coursera|udemy|lynda|pluralsight|skillshare|masterclass|music video|official video|trailer|episode|s\d\de\d\d", re.I)
+
+    def archive_videos(self, query: str, limit: int = 3, subject: str = "") -> list[Candidate]:
+        """Lecture/course videos on the Internet Archive, ranked by downloads. Playable inside the site.
+        Every result's title must name the subject (e.g. both "music" and "theory"), so a broad word like "theory"
+        can't pull in unrelated videos."""
+        anchor = _terms(subject)
+        terms = _terms(query) | anchor
+        if not terms:
+            return []
+        ordered = sorted(terms, key=len, reverse=True)
+        docs: list[dict] = []
+        attempts = [ordered[:4], ordered[:2]]
+        if anchor:  # then just the subject itself
+            attempts.append(sorted(anchor, key=len, reverse=True)[:3])
+        for words in attempts:  # all key words in the title, then the two most specific
+            q = " AND ".join(f"title:({t})" for t in words) + " AND mediatype:movies AND downloads:[500 TO *]"
+            data = get_json("https://archive.org/advancedsearch.php", {
+                "q": q, "fl[]": ["identifier", "title", "downloads", "description", "creator", "year"],
+                "sort[]": "downloads desc", "rows": 25, "output": "json",
+            })
+            docs = ((data or {}).get("response") or {}).get("docs", [])
+            docs = [d for d in docs if isinstance(d.get("title"), str) and (not anchor or anchor <= _terms(d["title"]) | {t.rstrip("s") for t in _terms(d["title"])})]
+            if docs:
+                break
+        out = []
+        seen_titles: set[str] = set()
+        for d in docs:  # sorted by downloads, so the most-watched copy of a duplicated upload wins
+            title = d.get("title") if isinstance(d.get("title"), str) else ""
+            if not title or self._ARCHIVE_SKIP.search(title) or title.lower() in seen_titles:
+                continue
+            if anchor and not anchor <= _terms(title) | {t.rstrip("s") for t in _terms(title)}:
+                continue
+            seen_titles.add(title.lower())
+            desc = d.get("description")
+            desc = " ".join(desc) if isinstance(desc, list) else (desc or "")
+            creator = d.get("creator")
+            creator = ", ".join(creator[:2]) if isinstance(creator, list) else (creator or "")
+            year = str(d.get("year") or "")[:4]
+            out.append(Candidate(
+                title=title[:300], url=f"https://archive.org/details/{d['identifier']}", type="video", source="internetarchive",
+                provider=creator or "Internet Archive", summary=re.sub(r"<[^>]+>|\s+", " ", html.unescape(desc)).strip()[:500],
+                score=int(d.get("downloads") or 0), archive_id=d["identifier"], year=int(year) if year.isdigit() else None, queries={query},
+            ))
+            if len(out) >= limit:
+                break
+        return out
 
     def wikipedia_outline(self, subject: str) -> list[tuple[str, list[str]]]:
         """[(section, [subsections])] of the subject's main Wikipedia article: a no-AI fallback outline."""

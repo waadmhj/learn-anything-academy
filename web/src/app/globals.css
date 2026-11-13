@@ -253,3 +253,19 @@ body {
 .ann-marker { mix-blend-mode: var(--ann-blend); }
 @keyframes ann-flash { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 30% { box-shadow: 0 0 0 4px var(--accent); } }
 .ann-flash { animation: ann-flash 1.4s ease-out 1; }
+
+/* ───────────── Reading view (external resources shown in the platform) ───────────── */
+.reader { --math-filter: none; }
+.reader img { max-width: 100%; height: auto; display: inline-block; }
+.reader figure { margin: 1.25rem 0; }
+.reader figcaption { font-size: 0.85rem; color: var(--text-3); margin-top: 0.35rem; }
+.reader img[src*="/media/math/"] { filter: var(--math-filter); }
+.reader blockquote blockquote { margin-top: 0.75rem; }
+.reader h1 { font-size: 1.6rem; font-weight: 600; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .reader { --math-filter: invert(0.92); }
+}
+:root[data-theme="dark"] .reader { --math-filter: invert(0.92); }
+.reader :is(p, ul, ol, blockquote, figure, table, pre, section, math[display="block"]) + * { margin-top: 1em; }
+.reader section > h2, .reader > h2 { margin-top: 2rem; }
+.reader math[display="block"] { display: block; margin: 1em 0; overflow-x: auto; }

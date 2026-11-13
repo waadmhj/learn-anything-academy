@@ -9,7 +9,7 @@ import { useAnnotations } from "@/components/annotations/use-annotations";
 import { LessonStatusBadge } from "@/components/course-bits";
 import { ExercisePanel, LessonQuiz, ObjectivesChecklist, useStudyTimer } from "@/components/lesson-parts";
 import { Markdown } from "@/components/markdown";
-import { ResourceCard } from "@/components/resources";
+import { isPlayable, ResourceCard } from "@/components/resources";
 import { TutorChat } from "@/components/tutor-chat";
 import { Badge, Button, Card, ErrorState, PageSkeleton, ProgressBar, STATUS_META, StatusDot, cn, levelTone, pct } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
@@ -153,7 +153,7 @@ export default function LessonPage({ params }: { params: Promise<{ id: string }>
   const authored = lesson.content_status === "authored";
   const required = lesson.resources.filter((r) => r.role === "required");
   const supplementary = lesson.resources.filter((r) => r.role !== "required");
-  const video = required.find((r) => r.embed.youtube) ?? supplementary.find((r) => r.embed.youtube);
+  const video = required.find(isPlayable) ?? supplementary.find(isPlayable);
   const outline = [
     { id: "overview", label: "Overview" },
     ...lesson.sections.map((s, i) => ({ id: `s-${i}`, label: s.title })),

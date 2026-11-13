@@ -110,3 +110,25 @@ def test_excerpt_keeps_relevant_chunks_within_budget():
     text = "\n\n".join([f"Paragraph {i} about gardening and soil." for i in range(300)] + ["Eigenvalues measure how a matrix stretches vectors."])
     out = excerpt(text, "eigenvalues matrix", budget=2000)
     assert "Eigenvalues" in out and len(out) <= 2100
+
+
+def test_viewer_rules():
+    from app import models as m
+    from app.services import viewer
+
+    assert viewer.frameable({}) is True
+    assert viewer.frameable({"x-frame-options": "SAMEORIGIN"}) is False
+    assert viewer.frameable({"content-security-policy": "default-src 'self'; frame-ancestors 'self'"}) is False
+    assert viewer.frameable({"content-security-policy": "frame-ancestors *"}) is True
+    clean = viewer.sanitize('<p onclick="x()">Hi <a href="javascript:alert(1)">x</a><math><mi>v</mi></math></p><script>1</script><iframe src="https://e.vil"></iframe>')
+    assert "onclick" not in clean and "javascript" not in clean and "<script" not in clean and "<iframe" not in clean
+    assert "<math><mi>v</mi></math>" in clean
+    yt = viewer.view(m.Resource(id="t1", url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", type="video", embed={"youtube": "dQw4w9WgXcQ"}))
+    assert yt["mode"] == "video" and "youtube-nocookie.com/embed/dQw4w9WgXcQ" in yt["player"]
+    vimeo = viewer.view(m.Resource(id="t2", url="https://vimeo.com/76979871", type="video", embed={}))
+    assert vimeo["player"] == "https://player.vimeo.com/video/76979871"
+    pl = viewer.view(m.Resource(id="t3", url="https://www.youtube.com/playlist?list=PLabc_123", type="video", embed={}))
+    assert pl["player"].endswith("videoseries?list=PLabc_123")
+    ch = viewer.view(m.Resource(id="t4", url="https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw", type="video", embed={}))
+    assert ch["player"].endswith("list=UUYO_jab_esuFRV4b17AJtAw")
+    viewer._cache.clear()

@@ -11,9 +11,19 @@ Markdown or text file). It builds a structured course and gathers the best-rated
   * **Open Library:** books ranked by reader ratings
   * **Semantic Scholar:** papers ranked by citations, with arXiv as a fallback
   * **Wikipedia:** an overview for each lesson
-  * **YouTube** (optional key): videos ranked by likes
+  * **Videos for every lesson:** Internet Archive lectures ranked by views (e.g. MIT OpenCourseWare), videos voted up on
+    Hacker News, and YouTube ranked by likes (optional key)
 
   Every link is real; nothing is invented.
+* **Everything opens inside the site:**
+  * videos play in the lesson (YouTube, Vimeo, Internet Archive, and playlists or channels)
+  * other resources open in a side panel:
+    * Wikipedia articles in a clean reading view, formulas included
+    * GitHub READMEs and Hacker News threads as reading views
+    * arXiv papers as PDFs
+    * any page that allows embedding, shown as-is
+    * pages that block embedding, as a reading view of their main text
+  * each one credits its source with a link to the original
 * **Full lessons written by Claude** (when an AI key is set), on the same standard as the hand-written original:
   * a concept ladder: simple → technical → worked example → diagram, maths or code → real world → common mistakes → when to use it
   * a practice task with hints and a model solution
@@ -28,7 +38,8 @@ Markdown or text file). It builds a structured course and gathers the best-rated
 learn-anything/
   api/   FastAPI + SQLAlchemy (SQLite locally, PostgreSQL in production)
          app/services/builder.py   plan → find resources → write lessons
-         app/services/sources.py   Hacker News, Open Library, Semantic Scholar/arXiv, Wikipedia, YouTube
+         app/services/sources.py   Hacker News, Open Library, Semantic Scholar/arXiv, Wikipedia, Internet Archive, YouTube
+         app/services/viewer.py    shows resources inside the site (players, embeds, sanitised reading views)
          app/services/llm.py       Claude (structured outputs, refusal fallbacks), optional
   web/   Next.js 15 + TypeScript + Tailwind v4
   docs/  STATUS.md, DEPLOYMENT.md
@@ -73,7 +84,7 @@ Lessons are written only when you open them (or click **Write the remaining…**
 ## Tests and checks
 
 ```powershell
-cd api;  .\.venv\Scripts\python.exe -m pytest      # 22 tests, fake Claude and fake sources: no network, no cost
+cd api;  .\.venv\Scripts\python.exe -m pytest      # 25 tests, fake Claude and fake sources: no network, no cost
 cd web;  npx tsc --noEmit; npm run lint; npm run build
 ```
 

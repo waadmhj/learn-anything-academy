@@ -1,7 +1,7 @@
 """Curriculum browsing (per course): stages, modules, lessons, resources, search and syllabus coverage."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -9,7 +9,7 @@ from .. import models as m
 from ..access import course_for, lesson_for, module_for, owned_course_ids, resource_for
 from ..auth import current_user
 from ..db import get_db
-from ..services import llm
+from ..services import llm, viewer
 from ..services.insights import curriculum, lesson_brief, module_state, prerequisites_met
 from ..services.progress import evidence, get_progress, progress_map
 
@@ -124,6 +124,17 @@ def get_resource(resource_id: str, db: Session = Depends(get_db), user: m.User =
     r = resource_for(db, user, resource_id)
     links = db.execute(select(m.Lesson.id, m.Lesson.title, m.LessonResource.role).join(m.LessonResource, m.Lesson.id == m.LessonResource.lesson_id).where(m.LessonResource.resource_id == r.id)).all()
     return resource_dict(r) | {"lessons": [{"id": i, "title": t, "role": role} for i, t, role in links]}
+
+
+@router.get("/resources/{resource_id}/view")
+def view_resource(resource_id: str, reader: bool = False, discussion: bool = False, db: Session = Depends(get_db), user: m.User = Depends(current_user)):
+    """How to show this resource (or its Hacker News discussion) inside the platform: a player, the page, or a reading view."""
+    r = resource_for(db, user, resource_id)
+    if discussion:
+        if not r.discussion_url:
+            raise HTTPException(404, "This resource has no discussion")
+        return viewer.view(m.Resource(id=r.id, url=r.discussion_url, type="discussion", embed={}), prefer_reader=reader)
+    return viewer.view(r, prefer_reader=reader)
 
 
 @router.get("/search")

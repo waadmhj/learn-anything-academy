@@ -83,11 +83,11 @@ export interface Resource {
   authors: string | null;
   year: number | null;
   isbn: string | null;
-  embed: { youtube?: string; iframe?: string };
+  embed: { youtube?: string; archive?: string; iframe?: string };
   chapters: (string | { t: string; label: string })[];
   summary: string | null;
   impact: string | null;
-  source: "hackernews" | "wikipedia" | "openlibrary" | "semanticscholar" | "arxiv" | "youtube" | "web";
+  source: "hackernews" | "wikipedia" | "openlibrary" | "semanticscholar" | "arxiv" | "youtube" | "internetarchive" | "web";
   score: number | null;
   comments: number | null;
   discussion_url: string | null;
@@ -278,3 +278,10 @@ export type Annotation =
   | (AnnBase & { kind: "note"; data: NoteData })
   | (AnnBase & { kind: "ink"; data: InkData });
 export type NotebookEntry = Annotation & { lesson_title: string; module_title: string; course_title: string };
+
+/** How a resource is shown inside the platform (GET /resources/{id}/view). */
+export type ResourceView =
+  | { mode: "video"; player: string; url: string }
+  | { mode: "iframe"; src: string; reader?: boolean; url: string }
+  | { mode: "reader"; html: string; credit: string; title?: string; iframe?: string | null; url: string }
+  | { mode: "link"; reason: string; url: string };

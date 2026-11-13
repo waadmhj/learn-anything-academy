@@ -76,7 +76,8 @@ def test_build_with_ai_writes_first_lesson_and_lessons_on_demand(client, ai):
     assert lesson["content_status"] == "authored" and len(lesson["quiz"]) == 5 and lesson["flashcards"] == 4
     diagram = next(s for s in lesson["sections"] if s["kind"] == "diagram")
     assert "<circle" in diagram["svg"] and "script" not in diagram["svg"]
-    assert all(r["role"] in ("required", "supplementary") for r in lesson["resources"]) and len(lesson["resources"]) == 1
+    assert all(r["role"] in ("required", "supplementary") for r in lesson["resources"])
+    assert [r["type"] for r in lesson["resources"]] == ["book", "video"], "the AI pick, plus a lecture video added when the AI chose none"
 
     r = client.post(f"/api/lessons/{second['id']}/write").json()
     assert r["status"] == "authored"
@@ -168,3 +169,62 @@ def test_opening_does_not_complete(client):
     assert client.put(f"/api/lessons/{lid}/status", json={"status": "completed"}).status_code == 409
     p = client.put(f"/api/lessons/{lid}/objectives", json={"checked": [0, 1, 2]}).json()
     assert p["status"] == "completed" and p["mastery"] <= 0.7
+
+
+def test_every_lesson_gets_a_video_and_resources_open_inside_the_platform(client, monkeypatch):
+    from app.services import viewer
+
+    c = make(client, text=SYLLABUS)
+    cur = client.get(f"/api/courses/{c['id']}/curriculum").json()
+    lesson_ids = [l["id"] for s in cur for mod in s["modules"] for l in mod["lessons"]]
+    for lid in lesson_ids:
+        res = client.get(f"/api/lessons/{lid}").json()["resources"]
+        videos = [r for r in res if r["type"] == "video"]
+        assert videos and videos[0]["embed"].get("archive"), "a relevant Internet Archive lecture is attached and playable"
+
+    res = client.get(f"/api/lessons/{lesson_ids[0]}").json()["resources"]
+    video = next(r for r in res if r["type"] == "video")
+    v = client.get(f"/api/resources/{video['id']}/view").json()
+    assert v["mode"] == "video" and v["player"].startswith("https://archive.org/embed/")
+
+    # Pages: embedded when the site allows it, otherwise a sanitised reading view, otherwise a link.
+    page = next(r for r in res if r["type"] != "video" and r["source"] != "wikipedia")
+    calls = []
+
+    def fake_fetch(url):
+        calls.append(url)
+        body = ("<html><head><title>T</title></head><body><nav>menu</nav><article><h1>Guide</h1>"
+                + "<p>Gardening soil holds water and nutrients for roots. </p>" * 40
+                + '<script>alert(1)</script><img src="/a.png" onerror="x()"></article></body></html>').encode()
+        return url, {"content-type": "text/html; charset=utf-8", "x-frame-options": "DENY"}, body
+
+    monkeypatch.setattr(viewer, "fetch", fake_fetch)
+    viewer._cache.clear()
+    v = client.get(f"/api/resources/{page['id']}/view").json()
+    assert v["mode"] == "reader" and "Gardening soil" in v["html"]
+    assert "<script" not in v["html"] and "onerror" not in v["html"] and v["credit"]
+    assert v["iframe"] is None  # the site refuses embedding, so no "original layout" toggle
+
+    monkeypatch.setattr(viewer, "fetch", lambda url: (url, {"content-type": "text/html"}, b"<html><body><div id=app></div></body></html>"))
+    viewer._cache.clear()
+    v = client.get(f"/api/resources/{page['id']}/view").json()
+    assert v["mode"] == "iframe" and v["reader"] is True
+
+    if page.get("discussion_url"):
+        assert client.get(f"/api/resources/{page['id']}/view", params={"discussion": True}).status_code == 200
+    viewer._cache.clear()
+
+
+def test_resource_view_is_private(client):
+    with SessionLocal() as db:
+        other = db.query(m.User).filter_by(email="other@example.com").one_or_none() or m.User(email="other2@example.com", display_name="O")
+        db.add(other)
+        db.flush()
+        course = m.Course(owner_id=other.id, title="Private", subject="Private", status="ready")
+        db.add(course)
+        db.flush()
+        db.add(m.Resource(id=f"c{course.id}-r1", course_id=course.id, title="R", provider="p", type="article", level="beginner", duration="",
+                          language="en", cost="", url="https://example.com", why="", embed={}, chapters=[], source="web"))
+        db.commit()
+        rid = f"c{course.id}-r1"
+    assert client.get(f"/api/resources/{rid}/view").status_code == 404

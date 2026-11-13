@@ -17,6 +17,9 @@ dependencies = [
   "anthropic>=2.8,<3",
   "pypdf>=4.2",
   "defusedxml>=0.7",          # safe parsing of generated SVG diagrams and arXiv feeds
+  "nh3>=0.2.17",              # sanitising pages shown in the reading view
+  "readability-lxml>=0.8.1",  # extracting the main text of pages that refuse embedding
+  "lxml_html_clean>=0.4",
 ]
 
 [project.optional-dependencies]

@@ -1,8 +1,10 @@
 "use client";
 
-import { BookOpen, ExternalLink, FileText, GraduationCap, MessagesSquare, MonitorPlay, Newspaper, PlayCircle, ScrollText, Sparkles, Star, ThumbsUp, TrendingUp, X } from "lucide-react";
-import { useState } from "react";
-import type { Resource } from "@/lib/types";
+import { BookOpen, ExternalLink, Eye, FileText, GraduationCap, Loader2, Maximize2, MessagesSquare, Minimize2, MonitorPlay, Newspaper, PlayCircle, ScrollText, Sparkles, Star, ThumbsUp, TrendingUp, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { api } from "@/lib/api";
+import type { Resource, ResourceView } from "@/lib/types";
 import { Badge, Button, cn } from "./ui";
 
 export const TYPE_META: Record<Resource["type"], { label: string; icon: typeof BookOpen }> = {
@@ -18,10 +20,10 @@ export const TYPE_META: Record<Resource["type"], { label: string; icon: typeof B
 
 export const SOURCE_LABEL: Record<Resource["source"], string> = {
   hackernews: "Hacker News", wikipedia: "Wikipedia", openlibrary: "Open Library", semanticscholar: "Semantic Scholar",
-  arxiv: "arXiv", youtube: "YouTube", web: "Web",
+  arxiv: "arXiv", youtube: "YouTube", internetarchive: "Internet Archive", web: "Web",
 };
 
-/** The evidence that this resource is well regarded (points, ratings, citations, likes). */
+/** The evidence that this resource is well regarded (points, ratings, citations, likes, views). */
 export function QualitySignal({ r }: { r: Resource }) {
   const n = (v: number | null) => (v ?? 0).toLocaleString();
   let icon = TrendingUp;
@@ -37,7 +39,7 @@ export function QualitySignal({ r }: { r: Resource }) {
   else if (r.source === "youtube" && r.score) {
     icon = ThumbsUp;
     text = `${n(r.score)} likes`;
-  }
+  } else if (r.source === "internetarchive" && r.score) text = `${n(r.score)} views`;
   if (!text) return null;
   const Icon = icon;
   return (
@@ -54,25 +56,82 @@ function toSeconds(t: string) {
   return t.split(":").reduce((acc, p) => acc * 60 + Number(p), 0);
 }
 
-export function YouTubeEmbed({ resource }: { resource: Resource }) {
+export function isPlayable(r: Resource) {
+  return r.type === "video" || Boolean(r.embed.youtube || r.embed.archive);
+}
+
+/** A player URL we can build without asking the server (YouTube and Internet Archive). */
+function directPlayer(r: Resource): string | null {
+  if (r.embed.youtube) return `https://www.youtube-nocookie.com/embed/${r.embed.youtube}?rel=0&modestbranding=1`;
+  if (r.embed.archive) return `https://archive.org/embed/${encodeURIComponent(r.embed.archive)}`;
+  return null;
+}
+
+function Player({ src, title, start = 0 }: { src: string; title: string; start?: number }) {
+  const url = start ? `${src}${src.includes("?") ? "&" : "?"}start=${start}&autoplay=1` : src;
+  return (
+    <div className="aspect-video overflow-hidden rounded-xl border border-border bg-black">
+      <iframe
+        key={url}
+        src={url}
+        title={title}
+        className="size-full"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+        allowFullScreen
+        loading="lazy"
+        referrerPolicy="strict-origin-when-cross-origin"
+      />
+    </div>
+  );
+}
+
+type ViewState = { key: string; view?: ResourceView; error?: string };
+
+function useResourceView(id: string, opts: { reader?: boolean; discussion?: boolean; enabled: boolean }) {
+  const params = new URLSearchParams();
+  if (opts.reader) params.set("reader", "true");
+  if (opts.discussion) params.set("discussion", "true");
+  const path = `/resources/${id}/view${params.size ? `?${params}` : ""}`;
+  const [state, setState] = useState<ViewState>({ key: "" });
+  useEffect(() => {
+    if (!opts.enabled) return;
+    let alive = true;
+    api<ResourceView>(path)
+      .then((view) => alive && setState({ key: path, view }))
+      .catch((e: Error) => alive && setState({ key: path, error: e.message || "Couldn't load this resource." }));
+    return () => {
+      alive = false;
+    };
+  }, [path, opts.enabled]);
+  return state.key === path ? state : { key: path };
+}
+
+/** Videos play inline: directly for YouTube/Internet Archive, via the server for Vimeo, playlists and channels. */
+export function VideoPlayer({ resource }: { resource: Resource }) {
   const [start, setStart] = useState(0);
-  const id = resource.embed.youtube!;
+  const direct = directPlayer(resource);
+  const { view, error } = useResourceView(resource.id, { enabled: !direct });
+  const src = direct ?? (view?.mode === "video" ? view.player : null);
   const chapters = resource.chapters.filter((c): c is { t: string; label: string } => typeof c === "object");
+  if (!src) {
+    if (view || error) {
+      return (
+        <p className="rounded-lg bg-surface-2 p-3 text-sm text-fg-2">
+          {view?.mode === "link" ? view.reason : (error ?? "This video can't be played here.")}{" "}
+          <a href={resource.url} target="_blank" rel="noopener noreferrer" className="text-accent-text hover:underline">Open it on its site</a>
+        </p>
+      );
+    }
+    return (
+      <div className="flex aspect-video items-center justify-center rounded-xl border border-border bg-surface-2">
+        <Loader2 className="size-5 animate-spin text-fg-3" />
+      </div>
+    );
+  }
   return (
     <div>
-      <div className="aspect-video overflow-hidden rounded-xl border border-border bg-black">
-        <iframe
-          key={start}
-          src={`https://www.youtube-nocookie.com/embed/${id}?rel=0&modestbranding=1${start ? `&start=${start}&autoplay=1` : ""}`}
-          title={resource.title}
-          className="size-full"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-          loading="lazy"
-          referrerPolicy="strict-origin-when-cross-origin"
-        />
-      </div>
-      {chapters.length > 0 && (
+      <Player src={src} title={resource.title} start={resource.embed.youtube ? start : 0} />
+      {chapters.length > 0 && resource.embed.youtube && (
         <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Jump to section">
           {chapters.map((c) => (
             <button key={c.t} onClick={() => setStart(toSeconds(c.t))} className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg-2 hover:border-accent hover:text-accent-text">
@@ -84,6 +143,9 @@ export function YouTubeEmbed({ resource }: { resource: Resource }) {
     </div>
   );
 }
+
+/** Kept for existing imports: the lesson's featured video. */
+export const YouTubeEmbed = VideoPlayer;
 
 function BookCover({ r }: { r: Resource }) {
   const [failed, setFailed] = useState(false);
@@ -101,45 +163,112 @@ function BookCover({ r }: { r: Resource }) {
   );
 }
 
-/** In-platform reader for docs/books/interactive tools that allow embedding; always offers the original link. */
-export function ReaderDrawer({ resource, onClose }: { resource: Resource; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label={`Reader: ${resource.title}`}>
-      <div className="hidden flex-1 bg-black/30 md:block" onClick={onClose} />
-      <div className="flex h-full w-full flex-col border-l border-border bg-surface shadow-[var(--shadow-lg)] md:w-[min(900px,70vw)] fade-in">
+/** Shows any resource inside the platform: a player, the embedded page, or a clean reading view. The original is one click away. */
+export function ResourceViewer({ resource, onClose, discussion }: { resource: Resource; onClose: () => void; discussion?: boolean }) {
+  const [reader, setReader] = useState(false);
+  const [wide, setWide] = useState(false);
+  const { view, error } = useResourceView(resource.id, { reader, discussion, enabled: true });
+  const title = discussion ? `Discussion: ${resource.title}` : resource.title;
+  const original = discussion ? (resource.discussion_url ?? resource.url) : resource.url;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  const canToggle = view && ((view.mode === "iframe" && view.reader) || (view.mode === "reader" && view.iframe));
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="hidden flex-1 bg-black/40 md:block" onClick={onClose} />
+      <div className={cn("flex h-full w-full flex-col border-l border-border bg-surface shadow-[var(--shadow-lg)]", wide ? "md:w-full" : "md:w-[min(1000px,75vw)]")}>
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{resource.title}</p>
-            <p className="truncate text-xs text-fg-3">{resource.provider}</p>
+            <p className="truncate text-sm font-medium">{title}</p>
+            <p className="truncate text-xs text-fg-3">
+              {discussion ? "Hacker News" : resource.provider}
+              {!discussion && resource.authors ? ` · ${resource.authors}` : ""}
+            </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <a href={resource.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-accent-text hover:underline">
-              Open original <ExternalLink className="size-3" />
+          <div className="flex shrink-0 items-center gap-1">
+            {canToggle && (
+              <Button size="sm" variant="secondary" onClick={() => setReader(!reader)}>
+                {view.mode === "reader" ? "Original layout" : "Reading view"}
+              </Button>
+            )}
+            <a href={original} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-fg-3 hover:bg-surface-2 hover:text-fg" title="Open the original site in a new tab">
+              Source <ExternalLink className="size-3" />
             </a>
-            <button onClick={onClose} className="rounded-md p-1.5 hover:bg-surface-2" aria-label="Close reader">
+            <button onClick={() => setWide(!wide)} className="hidden rounded-md p-1.5 text-fg-3 hover:bg-surface-2 md:block" aria-label={wide ? "Narrower" : "Full width"}>
+              {wide ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+            </button>
+            <button onClick={onClose} className="rounded-md p-1.5 hover:bg-surface-2" aria-label="Close">
               <X className="size-4" />
             </button>
           </div>
         </div>
-        <p className="border-b border-border bg-surface-2 px-4 py-1.5 text-[11px] text-fg-3">
-          Some sites don&apos;t allow embedding. If this panel stays blank, use “Open original”. The lesson stays open in this tab.
-        </p>
-        <iframe src={resource.embed.iframe} title={resource.title} className="flex-1 bg-white" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerPolicy="no-referrer" />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {!view && !error && (
+            <div className="flex h-full items-center justify-center gap-2 px-6 text-center text-sm text-fg-3">
+              <Loader2 className="size-4 shrink-0 animate-spin" /> Preparing “{title}”…
+            </div>
+          )}
+          {error && <p className="m-6 rounded-lg bg-surface-2 p-4 text-sm text-fg-2">{error}</p>}
+          {view?.mode === "video" && (
+            <div className="mx-auto max-w-4xl p-4 sm:p-6">
+              <Player src={view.player} title={title} />
+              {resource.summary && <p className="mt-4 whitespace-pre-line text-sm text-fg-2">{resource.summary}</p>}
+            </div>
+          )}
+          {view?.mode === "iframe" && (
+            <iframe src={view.src} title={title} className="size-full bg-white" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-downloads" referrerPolicy="no-referrer" />
+          )}
+          {view?.mode === "reader" && (
+            <article className="mx-auto max-w-3xl px-5 py-6 sm:px-8">
+              {view.title && <h1 className="mb-4 text-2xl font-semibold tracking-tight">{view.title}</h1>}
+              {/* Sanitised on the server (allowlisted tags and attributes, http(s) links only). */}
+              <div className="prose reader" dangerouslySetInnerHTML={{ __html: view.html }} />
+              <p className="mt-10 border-t border-border pt-3 text-xs text-fg-3">
+                {view.credit}{" "}
+                <a href={view.url} target="_blank" rel="noopener noreferrer" className="text-accent-text hover:underline">Original</a>
+              </p>
+            </article>
+          )}
+          {view?.mode === "link" && (
+            <div className="mx-auto max-w-lg p-8 text-center">
+              <p className="text-sm text-fg-2">{view.reason}</p>
+              <a href={view.url} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:opacity-90">
+                Open {resource.provider || "the site"} <ExternalLink className="size-3.5" />
+              </a>
+              {resource.summary && <p className="mt-6 text-left text-sm text-fg-2">{resource.summary}</p>}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
 export function ResourceCard({ r, compact, showVideo }: { r: Resource; compact?: boolean; showVideo?: boolean }) {
-  const [reader, setReader] = useState(false);
+  const [viewer, setViewer] = useState<false | "resource" | "discussion">(false);
+  const [playing, setPlaying] = useState(false);
   const [paperOpen, setPaperOpen] = useState(false);
+  const playable = isPlayable(r);
+  const showPlayer = (showVideo || playing) && playable;
+  const open = () => (playable ? setPlaying(true) : setViewer("resource"));
   const meta = TYPE_META[r.type];
   const Icon = meta.icon;
   return (
     <div className={cn("rounded-xl border border-border bg-surface", compact ? "p-3" : "p-4")}>
-      {showVideo && r.embed.youtube && (
+      {showPlayer && (
         <div className="mb-3">
-          <YouTubeEmbed resource={r} />
+          <VideoPlayer resource={r} />
         </div>
       )}
       <div className="flex gap-3">
@@ -155,9 +284,9 @@ export function ResourceCard({ r, compact, showVideo }: { r: Resource; compact?:
             <QualitySignal r={r} />
             {!compact && r.source !== "web" && <span className="text-[11px] text-fg-3">via {SOURCE_LABEL[r.source]}</span>}
           </div>
-          <a href={r.url} target="_blank" rel="noopener noreferrer" className={cn("mt-1.5 block font-medium leading-snug hover:text-accent-text", compact ? "text-[13px]" : "text-sm")}>
+          <button onClick={open} className={cn("mt-1.5 block text-left font-medium leading-snug hover:text-accent-text", compact ? "text-[13px]" : "text-sm")}>
             {r.title}
-          </a>
+          </button>
           <p className="mt-0.5 text-xs text-fg-3">
             {r.provider}
             {r.authors && ` · ${r.authors}`}
@@ -187,23 +316,29 @@ export function ResourceCard({ r, compact, showVideo }: { r: Resource; compact?:
             </div>
           )}
           <div className="mt-2 flex flex-wrap gap-2">
-            {r.embed.iframe && (
-              <Button size="sm" variant="secondary" onClick={() => setReader(true)}>
-                Read in platform
-              </Button>
-            )}
-            <a href={r.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[13px] text-fg-2 hover:bg-surface-2 hover:text-fg">
-              Open <ExternalLink className="size-3" />
-            </a>
+            {playable
+              ? !showPlayer && (
+                  <Button size="sm" onClick={() => setPlaying(true)}>
+                    <PlayCircle className="size-3.5" /> Watch here
+                  </Button>
+                )
+              : (
+                  <Button size="sm" variant="secondary" onClick={() => setViewer("resource")}>
+                    <Eye className="size-3.5" /> {r.type === "book" ? "View book" : r.type === "discussion" ? "Read discussion" : r.type === "paper" ? "Read paper" : "Read here"}
+                  </Button>
+                )}
             {r.discussion_url && r.discussion_url !== r.url && (
-              <a href={r.discussion_url} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[13px] text-fg-2 hover:bg-surface-2 hover:text-fg">
+              <button onClick={() => setViewer("discussion")} className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[13px] text-fg-2 hover:bg-surface-2 hover:text-fg">
                 <MessagesSquare className="size-3.5" /> HN discussion
-              </a>
+              </button>
             )}
+            <a href={r.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-fg-3 hover:bg-surface-2 hover:text-fg" title="Open the original site in a new tab">
+              Source <ExternalLink className="size-3" />
+            </a>
           </div>
         </div>
       </div>
-      {reader && <ReaderDrawer resource={r} onClose={() => setReader(false)} />}
+      {viewer && <ResourceViewer resource={r} discussion={viewer === "discussion"} onClose={() => setViewer(false)} />}
     </div>
   );
 }

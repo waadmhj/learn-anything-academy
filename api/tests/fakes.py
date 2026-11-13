@@ -117,5 +117,11 @@ class FakeSources:
     def youtube(self, query, limit=3):
         return []
 
+    def archive_videos(self, query, limit=3, subject=""):
+        return [self._c(query, "internetarchive", "video", title=f"Lecture: {query}", score=50_000, archive_id=re.sub(r"\W+", "-", query.lower()))]
+
+    def hn_videos(self, query, limit=3):
+        return []
+
     def wikipedia_outline(self, subject):
         return [("Basics", ["Introduction", "Key terms"]), ("Advanced topics", ["Deep dive"])]
